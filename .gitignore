@@ -7,15 +7,13 @@ PiPa/[Bb]uilds/
 PiPa/[Ll]ogs/
 PiPa/[Uu]ser[Ss]ettings/
 
-# 2. 忽略 PiPa 文件夹内的特定资源生成项
-# 注意：这里在路径前都加上了 PiPa/
-PiPa/[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
-PiPa/[Aa]ssets/[Ss]treamingAssets/aa.meta
-PiPa/[Aa]ssets/[Ss]treamingAssets/aa/*
-PiPa/[Aa]ssets/Plugins/Editor/JetBrains*
+# 自动生成的文件
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+ 
 
-# 3. 忽略通用临时文件（无论在哪个层级）
-*.log
+# Unity3D生成的文件
 *.csproj
 *.unityproj
 *.sln
@@ -25,24 +23,17 @@ PiPa/[Aa]ssets/Plugins/Editor/JetBrains*
 *.userprefs
 *.pidb
 *.booproj
-*.svd
-*.pdb
-*.mdb
-*.opendb
-*.VC.db
-*.pidb.meta
-*.pdb.meta
-*.mdb.meta
-sysinfo.txt
+ 
+# OS生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+ 
+# Visual Studio生成的文件
 .vs/
-.gradle/
-ExportedObj/
-.consulo/
-crashlytics-build.properties
-
-# 4. 忽略构建输出
 *.apk
-*.aab
 *.unitypackage
-*.unitypackage.meta
-*.app
