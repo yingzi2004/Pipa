@@ -315,8 +315,8 @@ public class GlowPulseEffect : MonoBehaviour
                 yield break;
             }
 
-            // 1. 发射波纹粒子
-            if (rippleSystem != null) {
+// 1. 发射波纹粒子 - 仅第一圈发射
+            if (rippleSystem != null && loopCount == 0) {
                 var rMain = rippleSystem.main; 
                 // 确保保留波纹的半透明属性，只借用琴弦对应的 RGB。比如只给 0.6f 的透明度
                 rMain.startColor = new Color(baseColor.r, baseColor.g, baseColor.b, 0.6f); 
@@ -330,8 +330,9 @@ public class GlowPulseEffect : MonoBehaviour
                 // [优化] 如果是立即切换（如切换到另一音），这里不管；但如果是松手后的优雅退出，我们必须保证动画完整性
                 float progress = timer / duration;
                 
-                // 缩放效果 (类似心脏跳动)
+                // 缩放效果 (类似心脏跳动) - 已禁用
                 // 0 -> 0.5 (放大), 0.5 -> 1 (回弹)
+                /* 
                 float scaleMulti;
                 if (progress < 0.5f)
                     scaleMulti = Mathf.Lerp(startScale, maxScale, progress * 2f);
@@ -341,11 +342,16 @@ public class GlowPulseEffect : MonoBehaviour
                 // 如果对象已被外部禁用，则立即退出
                 if (!gameObject.activeInHierarchy) yield break;
 
-                transform.localScale = originalScale * scaleMulti;
+                transform.localScale = originalScale * scaleMulti; 
+                */
 
-                // 泛光强度效果
-                float intensity = intensityCurve.Evaluate(progress);
-                Color finalEmission = baseColor * intensity;
+                // 如果对象已被外部禁用，则立即退出
+                if (!gameObject.activeInHierarchy) yield break;
+                // transform.localScale = originalScale; // 保持原大小
+
+                // 泛光强度效果 - 已禁用闪烁 (固定亮度)
+                // float intensity = intensityCurve.Evaluate(progress);
+                Color finalEmission = baseColor; // 保持原色亮度，不再波动
 
                 foreach (var r in renderers)
                 {

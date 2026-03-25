@@ -2815,16 +2815,16 @@ MonoBehaviour:
     lightSequences:
     - lightObject: {fileID: 2133265565}
       startTime: 0
-      endTime: 0.3
+      endTime: 0.4
     - lightObject: {fileID: 1365783267}
-      startTime: 0.3
-      endTime: 0.6
-    - lightObject: {fileID: 1365783267}
-      startTime: 0.6
+      startTime: 0.4
       endTime: 0.9
     - lightObject: {fileID: 1365783267}
       startTime: 0.9
-      endTime: 1.2
+      endTime: 1.3
+    - lightObject: {fileID: 1365783267}
+      startTime: 1.3
+      endTime: 1.6
   - keyName: "\u624C\u4E42|mid"
     useCustomColor: 1
     keyColor: {r: 0, g: 0.5019608, b: 1, a: 1}
@@ -2832,10 +2832,10 @@ MonoBehaviour:
     lightSequences:
     - lightObject: {fileID: 2133265565}
       startTime: 0
-      endTime: 0.3
+      endTime: 1
     - lightObject: {fileID: 1365783267}
-      startTime: 0.3
-      endTime: 0.6
+      startTime: 1
+      endTime: 2
   - keyName: "\u624C\u4E42|bottom"
     useCustomColor: 1
     keyColor: {r: 0, g: 0.5, b: 1, a: 3}
@@ -2843,16 +2843,16 @@ MonoBehaviour:
     lightSequences:
     - lightObject: {fileID: 2133265565}
       startTime: 0
-      endTime: 0.3
+      endTime: 0.8
     - lightObject: {fileID: 1365783267}
-      startTime: 0.3
-      endTime: 0.6
+      startTime: 0.8
+      endTime: 1.3
     - lightObject: {fileID: 2133265565}
-      startTime: 0.6
-      endTime: 0.9
+      startTime: 1.3
+      endTime: 1.6
     - lightObject: {fileID: 1365783267}
-      startTime: 0.9
-      endTime: 1.2
+      startTime: 1.6
+      endTime: 2
   - keyName: "\u601D|\u7532\u7EBF+"
     useCustomColor: 1
     keyColor: {r: 1, g: 0.17842808, b: 0, a: 3}
@@ -2909,7 +2909,7 @@ MonoBehaviour:
     - lightObject: {fileID: 1262957496}
       startTime: 0
       endTime: 0.3
-  - keyName: "\u6441"
+  - keyName: "\u63CC"
     useCustomColor: 1
     keyColor: {r: 1, g: 0.17842808, b: 0, a: 3}
     holdUntilRelease: 0
@@ -2917,7 +2917,7 @@ MonoBehaviour:
     - lightObject: {fileID: 1723274754}
       startTime: 0
       endTime: 0.3
-  - keyName: "\u6441|\u70B9"
+  - keyName: "\u63CC|\u70B9"
     useCustomColor: 1
     keyColor: {r: 1, g: 0.17842808, b: 0, a: 3}
     holdUntilRelease: 0
