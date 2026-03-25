@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using System.Linq;
@@ -65,7 +65,7 @@ public class PipaController : MonoBehaviour
     private GameObject lastActiveObj = null;
 
     // 基础音色类型（这些不是特殊指法，用 singleNote 位置）
-    private static readonly HashSet<string> basicToneTypes = new HashSet<string> { "点", "挑", "落指）", "勾指√" };
+    private static readonly HashSet<string> basicToneTypes = new HashSet<string> { "点", "挑", "勾指√" };
 
     void Start() {
         SetInstrument("FourAirPipes"); // 默认载入
@@ -126,22 +126,26 @@ public class PipaController : MonoBehaviour
                 note = data; 
             }
 
-            // 把前端可能传来的生僻字 𢩩 转换为 Unity Inspector 易于配置的 扌乂
-            if (note.Contains("𢩩") || note.Contains("扌")) note = "扌乂";
+            // 把前端可能传来的生僻字 𢩩 安全替换为 Unity Inspector 易于显示的 扌乂
+            note = note.Replace("𢩩", "扌乂");
 
             string processedKey = string.IsNullOrEmpty(typeStr) ? note : $"{note}|{typeStr}";
             
-            // 转发给时间序列亮光控制器（用于处理类似 扌乂|top 的动态时序亮光）
+            // 转发给时间序列亮光控制器
             var tlc = GetComponent<TimedLightController>();
             if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
             if (tlc != null) {
                 Debug.Log($"[PipaController] 已找到时序控制器，正在派发: {processedKey}");
-                tlc.OnKeyPressed(processedKey);
+                bool isHandled = tlc.OnKeyPressed(processedKey);
+                if (isHandled) {
+                    Debug.Log($"[PipaController] 独立指法 {processedKey} 已被接管，跳过连带单音点亮。");
+                    return;
+                }
             } else {
                 Debug.LogWarning($"[PipaController] 未找到 TimedLightController，无法执行特殊灯光效果。");
             }
 
-            Debug.Log($"[Highlight] note={note}, type={typeStr}");
+            Debug.Log($"[Highlight] REAL RAW DATA FROM UI: {data} | note={note}, type={typeStr}");
             UpdateDisplay(note, typeStr);
         } finally {
             _isHighlightDispatching = false;
@@ -159,17 +163,19 @@ public class PipaController : MonoBehaviour
             // 特殊指法（甲线十、勾指√、慢撚○、全撚○、落指）等）→ 查 fingerGroupMap
             if(fingerGroupMap.TryGetValue(typeStr, out var group)) {
                 var overrideNote = group.noteOverrides.FirstOrDefault(n => n.noteName == note);
-                
+
                 if(overrideNote.targetObj != null) {
                     target = overrideNote.targetObj;
-                } 
+                }
                 else if(group.inheritSingleNotes) {
                     singleNoteMap.TryGetValue(note, out target);
                 }
                 // else: inherit=false -> target=null (没配就不亮)
+            } else {
+                // 【新增容错】如果是一个没在 PipaController 中配置过的特殊类型（比如新增的甲线），降级回查单音！
+                singleNoteMap.TryGetValue(note, out target);
             }
-            // fingerGroupMap 里找不到这个指法 → target 保持 null（没配就不亮）
-        } 
+        }
         else {
             // 基础音色（点/挑）或无类型 → 使用共享位置
             singleNoteMap.TryGetValue(note, out target);
@@ -193,8 +199,6 @@ public class PipaController : MonoBehaviour
     public void DimString(string data) {
         if (string.IsNullOrEmpty(data)) return;
 
-        // 【可选功能】如果前端音频结束后希望立刻打断 TimedLightController 的剩余发光序列，请释放以下代码：
-        /*
         string note = "";
         string typeStr = "";
         if (data.Contains("|")) {
@@ -202,19 +206,26 @@ public class PipaController : MonoBehaviour
             note = parts[0];
             if (parts.Length > 1) typeStr = parts[1];
         } else {
-            note = data; 
+            note = data;
         }
-        if (note == "𢩩") note = "扌乂";
+
+        note = note.Replace("𢩩", "扌乂");
         string processedKey = string.IsNullOrEmpty(typeStr) ? note : $"{note}|{typeStr}";
-        
+
         var tlc = GetComponent<TimedLightController>();
         if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
-        // 当熄灭指令和正在播放的序列匹配时停止
-        // if (tlc != null && tlc.IsSequenceActive()) tlc.ManualStop();
-        */
+        if (tlc != null) {
+            tlc.OnKeyReleased(processedKey);
+        }
 
         if(lastActiveObj != null) {
-            lastActiveObj.SetActive(false);
+            // [修改] 实现优雅退出：如果是点击（按住时间短），让它播完一次动画再隐藏；否则在当前循环结束后隐藏
+            var pulse = lastActiveObj.GetComponent<GlowPulseEffect>();
+            if (pulse != null) {
+                pulse.RequestGracefulStop();
+            } else {
+                lastActiveObj.SetActive(false);
+            }
             lastActiveObj = null;
         }
     }
@@ -243,20 +254,57 @@ public class PipaController : MonoBehaviour
         return tiaoColor;
     }
 
+    System.Collections.IEnumerator DelayedPulseCall(GlowPulseEffect pulse) {
+        yield return new WaitForEndOfFrame();
+        if (pulse != null) pulse.Pulse();
+    }
+
     void Activate(GameObject obj, string typeStr) {
         if(!obj) return;
-        obj.SetActive(true);
+        bool wasActive = obj.activeInHierarchy;
         
+        // 【新增】尝试交给特定的控制器接管（针对需要依附单音的特殊指法效果，如甲线十、轮指）
+        var dfc = GetComponent<DependentFingeringController>();
+        if (dfc == null) dfc = FindObjectOfType<DependentFingeringController>();
+        if (dfc != null && dfc.HandleAction(obj, typeStr, wasActive)) {
+            return; // 已接管，不往下走
+        }
+
+        obj.SetActive(true);
+
         Color c = ResolveColor(typeStr);
         
         // 设置所有材质颜色
         var renderers = obj.GetComponentsInChildren<Renderer>(true);
         foreach(var r in renderers) {
-            r.material.color = c;
-            r.material.SetColor("_EmissionColor", c * 1.5f);
+            foreach(var m in r.materials) {
+                if(m.HasProperty("_Color")) m.color = c;
+                else if(m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+                
+                if(m.HasProperty("_EmissionColor")) {
+                    m.SetColor("_EmissionColor", c * 1.5f);
+                    m.EnableKeyword("_EMISSION");
+                }
+            }
         }
         var images = obj.GetComponentsInChildren<Image>(true);
         foreach(var i in images) i.color = c;
+
+        var pulse = obj.GetComponent<GlowPulseEffect>();
+        if (pulse == null) pulse = obj.AddComponent<GlowPulseEffect>();
+
+        // WebGL 修复: 确保资源注入
+        var tlc = GetComponent<TimedLightController>();
+        if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
+        if (tlc != null) {
+            pulse.SetResources(tlc.rippleShader, tlc.rippleTexture);
+        }
+        
+        // 只有当物体本身已经是激活状态时，才需要手动触发（初次激活靠OnEnable触发）
+        if (wasActive) {
+            StartCoroutine(DelayedPulseCall(pulse));
+        }
+        
     }
 
     void TurnOffAll() {
@@ -528,3 +576,12 @@ public class PipaController : MonoBehaviour
     }
 #endif
 }
+
+
+
+
+
+
+
+
+

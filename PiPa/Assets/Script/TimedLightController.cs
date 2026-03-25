@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -26,27 +26,33 @@ public class TimedLightController : MonoBehaviour
     [System.Serializable]
     public class KeyLightConfig
     {
-        [Tooltip("键位名称 (如: 扌乂|top, 扌乂|mid, 扌乂|bottom)")]
+        [Tooltip("键位名称 (如: 扌乂|top, 扌乂|mid, 摁)")]
         public string keyName;
-        
-        [Tooltip("该键位对应的亮光序列配置")]
+
+        [Tooltip("是否为该按键开启专属发光颜色")]
+        public bool useCustomColor = true;
+
+        [Tooltip("专属发光颜色")]
+        [ColorUsage(true, true)] public Color keyColor = new Color(0f, 0.5f, 1f, 3f);
+
+        [Tooltip("勾选时，动画和发光效果会持续维持在最后，直到玩家松开该按键")]
+        public bool holdUntilRelease = false;
+
         public List<LightSequence> lightSequences = new List<LightSequence>();
     }
 
-    [Header("--- 键位配置（仅三个特殊键位）---")]
-    [Tooltip("扌乂|top 的亮光配置")]
-    public KeyLightConfig topKey;
-    
-    [Tooltip("扌乂|mid 的亮光配置")]
-    public KeyLightConfig midKey;
-    
-    [Tooltip("扌乂|bottom 的亮光配置")]
-    public KeyLightConfig bottomKey;
+[Header("独立发声指法配置")]
+    [Tooltip("配置不需要配合单音就直接发声的独立指法序列")]
+    public List<KeyLightConfig> independentKeys = new List<KeyLightConfig>();
 
     [Header("--- 材质高亮配置 ---")]
     [Tooltip("是否在激活动画时同时赋予材质发光效果（与 PipaController 保持一致）")]
-    public bool applyEmissionColor = true;
+    public bool applyEmissionColor = false;
     [ColorUsage(true, true)] public Color glowColor = new Color(0f, 0.5f, 1f, 3f);
+
+    [Header("WebGL特效资源修正 (注入给动态生成的组件)")]
+    public Shader rippleShader;
+    public Texture2D rippleTexture;
 
     [Header("--- 后端发送配置 (可选) ---")]
     [Tooltip("勾选后在触发时发送消息给后端")]
@@ -67,27 +73,38 @@ public class TimedLightController : MonoBehaviour
     {
         // 构建键位名称到配置的映射
         RebuildKeyConfigMap();
+        
+        // 【新增】在初始化时，确保所有配置的光效对象设为隐藏（与单音保持一致）
+        TurnOffAllLightsAtStart();
+    }
+
+    void TurnOffAllLightsAtStart()
+    {
+        if (independentKeys != null) {
+            foreach (var config in independentKeys) {
+                if (config != null && config.lightSequences != null) {
+                    foreach (var seq in config.lightSequences) {
+                        if (seq.lightObject) seq.lightObject.SetActive(false);
+                    }
+                }
+            }
+        }
     }
 
     void RebuildKeyConfigMap()
     {
         _keyConfigMap.Clear();
 
-        // 只加载三个特殊键位的配置
-        if (topKey != null && !string.IsNullOrEmpty(topKey.keyName))
-        {
-            _keyConfigMap.Add(topKey.keyName, topKey);
-        }
-        if (midKey != null && !string.IsNullOrEmpty(midKey.keyName))
-        {
-            _keyConfigMap.Add(midKey.keyName, midKey);
-        }
-        if (bottomKey != null && !string.IsNullOrEmpty(bottomKey.keyName))
-        {
-            _keyConfigMap.Add(bottomKey.keyName, bottomKey);
+        if (independentKeys != null) {
+            foreach (var config in independentKeys) {
+                if (config != null && !string.IsNullOrEmpty(config.keyName)) {
+                    _keyConfigMap[config.keyName.Replace(" ", "").Trim()] = config;
+                }
+            }
         }
 
-        Debug.Log($"[TimedLightController] 已加载 {_keyConfigMap.Count} 个特殊键位配置");
+        string loadedKeys = string.Join(", ", _keyConfigMap.Keys);
+        Debug.Log($"[TimedLightController] 已加载 {_keyConfigMap.Count} 个独立指法按键配置: [{loadedKeys}]。警告：我正挂载在名为【{gameObject.name}】的物体上！");
     }
 
     void Update()
@@ -103,70 +120,120 @@ public class TimedLightController : MonoBehaviour
         // 检查是否序列已完成
         if (_sequenceTimer > maxEndTime)
         {
-            StopSequence();
-            return;
+            if (!_currentKeyConfig.holdUntilRelease) {
+                StopSequence();
+                return;
+            }
+            // 若需要持续到松开发声停止，就不再增加时间，直接保持最后的状态
+            _sequenceTimer = maxEndTime; 
         }
 
         // 记录每个物理对象的最终状态，防止同一个对象被后续的 false 强行覆盖
         Dictionary<GameObject, bool> objectStates = new Dictionary<GameObject, bool>();
+        List<GameObject> objectsToPulse = new List<GameObject>();
 
         for (int i = 0; i < _currentKeyConfig.lightSequences.Count; i++)
         {
             var seq = _currentKeyConfig.lightSequences[i];
             if (seq.lightObject == null) continue;
 
-            bool shouldBeActive = _sequenceTimer >= seq.startTime && _sequenceTimer < seq.endTime;
+            bool shouldBeActive;
+            if (_currentKeyConfig.holdUntilRelease) {
+                // 如果开启长按保持，则只要过完 startTime 就一直保持激活（忽略endTime限制）
+                shouldBeActive = _sequenceTimer >= seq.startTime;
+            } else {
+                shouldBeActive = _sequenceTimer >= seq.startTime && _sequenceTimer <= seq.endTime; // 保证最后一帧依然亮起
+            }
 
             if (objectStates.ContainsKey(seq.lightObject)) {
                 objectStates[seq.lightObject] = objectStates[seq.lightObject] || shouldBeActive;
             } else {
                 objectStates[seq.lightObject] = shouldBeActive;
             }
-            
-            // 同步旧的数组状态（不再绝对依赖，保留以防万一）
+
+            if (shouldBeActive && !_lightPrevState[i])
+            {
+                if (seq.lightObject.activeInHierarchy && !objectsToPulse.Contains(seq.lightObject)) {
+                    objectsToPulse.Add(seq.lightObject);
+                }
+            }
+
             _lightPrevState[i] = shouldBeActive;
         }
 
-        // 统一应用每个对象的最终状态
-        foreach (var kvp in objectStates)
+                foreach (var kvp in objectStates)
         {
             GameObject obj = kvp.Key;
             bool targetState = kvp.Value;
 
             if (obj.activeSelf != targetState)
             {
-                if (targetState && obj.transform.parent != null && !obj.transform.parent.gameObject.activeInHierarchy)
-                {
-                    Debug.LogWarning($"[TimedLightController] 警告: 您想显示的物体 {obj.name} 所在的父物体被隐藏了！必须先激活其父节点！");
+                if (targetState && obj.transform.parent != null && !obj.transform.parent.gameObject.activeInHierarchy) { Debug.LogWarning($"[TimedLightController] 警告: 试图显示 {obj.name}，但其父物体 {obj.transform.parent.name} 已被隐藏！光效将不可见！"); } obj.SetActive(targetState);
+            }
+            
+            // 无论刚才是否切换了状态，只要这帧需要亮，就确保加上发光效果
+            if (targetState)
+            {
+                if (applyEmissionColor || (_currentKeyConfig != null && _currentKeyConfig.useCustomColor)) {
+                    Color c = (_currentKeyConfig != null && _currentKeyConfig.useCustomColor) ? _currentKeyConfig.keyColor : glowColor;
+                    ApplyGlow(obj, c);
                 }
+                var pulse = obj.GetComponent<GlowPulseEffect>();
+                if (pulse == null) pulse = obj.AddComponent<GlowPulseEffect>();
+                
+                // WebGL修复: 使用 SetResources 方法安全注入资源并触发材质刷新
+                if (pulse != null) {
+                   pulse.SetResources(rippleShader, rippleTexture);
+                }
+            }
+        }
 
-                obj.SetActive(targetState);
-
-                if (targetState && applyEmissionColor)
+        // 统一触发我们需要激发的对象，不论它是否是刚刚被 SetActive(true)
+                foreach (var obj in objectsToPulse)
+        {
+            if (obj != null)
+            {
+                Debug.Log($"[TimedLightController] attempting to pulse {obj.name}, activeInHierarchy={obj.activeInHierarchy}, time={_sequenceTimer}");
+                if (obj.activeInHierarchy)
                 {
-                    ApplyGlow(obj);
+                    if (applyEmissionColor || (_currentKeyConfig != null && _currentKeyConfig.useCustomColor)) {
+                        Color c = (_currentKeyConfig != null && _currentKeyConfig.useCustomColor) ? _currentKeyConfig.keyColor : glowColor;
+                        ApplyGlow(obj, c);
+                    }
+                    var pulse = obj.GetComponent<GlowPulseEffect>();
+                    if (pulse != null) 
+                    {
+                        Debug.Log($"[TimedLightController] Calling pulse.Pulse() on {obj.name}");
+                        StartCoroutine(DelayedPulseCall(pulse));
+                    }
                 }
             }
         }
     }
 
+
     /// <summary>
     /// 对物体应用高亮发光材质（同步 PipaController 的视觉效果）
     /// </summary>
-    private void ApplyGlow(GameObject obj)
+    private System.Collections.IEnumerator DelayedPulseCall(GlowPulseEffect pulse) {
+        yield return new WaitForEndOfFrame();
+        if (pulse != null) pulse.Pulse();
+    }
+
+private void ApplyGlow(GameObject obj, Color colorToApply)
     {
         if (obj == null) return;
-        
+
         var renderers = obj.GetComponentsInChildren<Renderer>(true);
         foreach (var r in renderers)
         {
-            r.material.color = glowColor;
-            r.material.SetColor("_EmissionColor", glowColor * 1.5f);
+            r.material.color = colorToApply;
+            r.material.SetColor("_EmissionColor", colorToApply * 1.5f);
         }
         var images = obj.GetComponentsInChildren<UnityEngine.UI.Image>(true);
         foreach (var img in images)
         {
-            img.color = glowColor;
+            img.color = colorToApply;
         }
     }
 
@@ -177,25 +244,28 @@ public class TimedLightController : MonoBehaviour
     /// （和 PipaController.HighlightString 接口保持一致）
     /// </summary>
     /// <param name="keyName">键位名称 (如: 扌乂|top, 扌乂|mid, 扌乂|bottom)</param>
-    public void OnKeyPressed(string keyName)
+    /// <returns>返回是否成功匹配接管了该独立指法</returns>
+    public bool OnKeyPressed(string keyName)
     {
-        if (string.IsNullOrEmpty(keyName)) return;
+        if (string.IsNullOrEmpty(keyName)) return false;
 
         Debug.Log($"[TimedLightController] 收到按键指令: '{keyName}'");
 
         // 去除前端可能带进来的多余空格或不可见字符
         string cleanKey = keyName.Replace(" ", "").Trim();
 
+        // 提取基础按键（去掉可能携带的 '|点' 等后缀）例如 "摁|点" -> "摁"
+        string baseKey = cleanKey;
+        if (cleanKey.Contains("|")) {
+            baseKey = cleanKey.Split('|')[0].Trim();
+        }
+
         // 强容错匹配：专门用来对付前端特殊指法字符串可能带来的编码乱码
         KeyLightConfig config = null;
-        if (cleanKey.EndsWith("|top")) {
-            config = topKey;
-        } else if (cleanKey.EndsWith("|mid")) {
-            config = midKey;
-        } else if (cleanKey.EndsWith("|bottom")) {
-            config = bottomKey;
-        } else if (_keyConfigMap.TryGetValue(cleanKey, out var exactConfig)) {
+        if (_keyConfigMap.TryGetValue(cleanKey, out var exactConfig)) {
             config = exactConfig;
+        } else if (_keyConfigMap.TryGetValue(baseKey, out var baseConfig)) {
+            config = baseConfig;
         } // 若都没匹配上，再尝试原始名字
         else if (_keyConfigMap.TryGetValue(keyName, out var rawConfig)) {
             config = rawConfig;
@@ -203,8 +273,9 @@ public class TimedLightController : MonoBehaviour
 
         if (config == null || config.lightSequences.Count == 0 || string.IsNullOrEmpty(config.keyName))
         {
-            Debug.LogWarning($"[TimedLightController] 无法执行序列，找不到配置或配置列表为空。当前匹配键: {cleanKey}");
-            return;
+            // 如果是在独立按键列表里找不到该指令是正常的，因为有可能是单音或者依赖类指法（由 PipaController/DependentFingeringController 接管）
+            Debug.LogWarning($"[TimedLightController] 按键没匹配到独立配置! received={keyName}, cleanKey={cleanKey}, baseKey={baseKey}");
+            return false;
         }
 
         // 停止当前序列（如果有的话）
@@ -213,9 +284,10 @@ public class TimedLightController : MonoBehaviour
             StopSequence();
         }
 
-        Debug.Log($"[TimedLightController] 成功匹配并启动: {config.keyName} 的 {config.lightSequences.Count} 段光效序列");
+        Debug.Log($"[TimedLightController] 独立发声被成功捕获！即将播放: {config.keyName} 的 {config.lightSequences.Count} 段序列");
 
         // 设置新的配置并启动
+        Debug.Log("[TimedLightController] Match Found! Starting sequence for: " + config.keyName); 
         _currentKeyConfig = config;
         StartSequence();
 
@@ -223,6 +295,38 @@ public class TimedLightController : MonoBehaviour
         if (sendToBackend)
         {
             SendToBackend(keyName);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 前端松开按键时调用（用于打断需要 holdUntilRelease 的亮光序列）
+    /// </summary>
+    public void OnKeyReleased(string keyName)
+    {
+        if (string.IsNullOrEmpty(keyName) || !_isSequenceActive || _currentKeyConfig == null) return;
+
+        string cleanKey = keyName.Replace(" ", "").Trim();
+        string baseKey = cleanKey;
+        if (cleanKey.Contains("|")) {
+            baseKey = cleanKey.Split('|')[0].Trim();
+        }
+
+        KeyLightConfig config = null;
+        if (_keyConfigMap.TryGetValue(cleanKey, out var exactConfig)) {
+            config = exactConfig;
+        } else if (_keyConfigMap.TryGetValue(baseKey, out var baseConfig)) {
+            config = baseConfig;
+        } else if (_keyConfigMap.TryGetValue(keyName, out var rawConfig)) {
+            config = rawConfig;
+        }
+
+        // 如果前端正在熄灭的值 就是我们正在播放的配置，则立刻停止亮光！
+        if (config != null && config == _currentKeyConfig)
+        {
+            Debug.Log($"[TimedLightController] 前端松开按键: {keyName}，长按保持结束，立刻中止并熄灭该序列！");
+            StopSequence();
         }
     }
 
@@ -341,3 +445,18 @@ public class TimedLightController : MonoBehaviour
         return max > 0 ? _sequenceTimer / max : 0f;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
