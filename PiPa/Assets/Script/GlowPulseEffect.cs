@@ -279,9 +279,13 @@ public class GlowPulseEffect : MonoBehaviour
 
         // 重新获取材质和颜色，因为 PipaController 可能会在 Activate 时修改材质颜色
         renderers = GetComponentsInChildren<Renderer>();
-        if (renderers.Length > 0 && renderers[0].material.HasProperty("_Color"))
+        if (renderers.Length > 0)
         {
-            baseColor = renderers[0].material.color;
+            if (renderers[0].material.HasProperty("_Color")) {
+                baseColor = renderers[0].material.color;
+            } else if (renderers[0].material.HasProperty("_BaseColor")) {
+                baseColor = renderers[0].material.GetColor("_BaseColor");
+            }
         }
 
         if (rippleSystem != null) { 

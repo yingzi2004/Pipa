@@ -69,7 +69,7 @@ public class PipaController : MonoBehaviour
 
     void Start() {
         SetInstrument("FourAirPipes"); // 默认载入
-        Debug.Log("PipaController Initialized (Unified-Message Mode).");
+        Debug.Log($"PipaController Initialized (Unified-Message Mode). object='{gameObject.name}', id={GetInstanceID()}");
     }
 
     public void SetInstrument(string mode) {
@@ -98,9 +98,30 @@ public class PipaController : MonoBehaviour
         }
 
         foreach(var g in currentSet.fingerGroups) {
-            if(!string.IsNullOrEmpty(g.fingerName) && !fingerGroupMap.ContainsKey(g.fingerName))
+            if(string.IsNullOrEmpty(g.fingerName)) continue;
+
+            // 先按原始名字注册
+            if(!fingerGroupMap.ContainsKey(g.fingerName))
                 fingerGroupMap.Add(g.fingerName, g);
+
+            // 再注册标准化/别名 key，避免 Inspector 与前端命名不一致
+            // 例如："甲线＋"(全角) vs "甲线+"(半角) vs "甲线十"(前端固定)
+            string normalized = g.fingerName.Replace("＋", "+").Trim();
+            if(!fingerGroupMap.ContainsKey(normalized))
+                fingerGroupMap.Add(normalized, g);
+
+            // 甲线类指法互相加别名（让前端发来的 "甲线十" 必定能命中）
+            if (normalized.Contains("甲线")) {
+                string[] aliases = new string[] { "甲线十", "甲线", "甲线+", "甲线＋" };
+                foreach (var a in aliases) {
+                    if (!fingerGroupMap.ContainsKey(a)) fingerGroupMap.Add(a, g);
+                }
+            }
         }
+
+        // 调试：输出已加载的指法组 key，便于确认运行时是否真的加载到了“甲线+ / 甲线十”等
+        string groupKeys = string.Join(", ", fingerGroupMap.Keys);
+        Debug.Log($"[PipaController] Cache rebuilt. object='{gameObject.name}', instrument={(currentSet == fivePipes ? "FiveAirPipes" : "FourAirPipes")}, singleNotes={singleNoteMap.Count}, fingerGroups={fingerGroupMap.Count} [{groupKeys}]");
     }
 
     // 标记正在派发以防循环调用
@@ -126,23 +147,31 @@ public class PipaController : MonoBehaviour
                 note = data; 
             }
 
-            // 把前端可能传来的生僻字 𢩩 安全替换为 Unity Inspector 易于显示的 扌乂
-            note = note.Replace("𢩩", "扌乂");
+            // 把前端可能传来的生僻字安全替换为 Unity Inspector 易于显示的替代字形
+            // （前端通常已转换；这里再做一层容错，避免配置命名不一致导致查不到）
+            note = note
+                .Replace("𢩩", "扌乂")
+                .Replace("𫼚", "扌六")
+                .Replace("𫢅", "亻一")
+                .Replace("𠆾", "亻六");
 
             string processedKey = string.IsNullOrEmpty(typeStr) ? note : $"{note}|{typeStr}";
-            
-            // 转发给时间序列亮光控制器
-            var tlc = GetComponent<TimedLightController>();
-            if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
-            if (tlc != null) {
-                Debug.Log($"[PipaController] 已找到时序控制器，正在派发: {processedKey}");
-                bool isHandled = tlc.OnKeyPressed(processedKey);
-                if (isHandled) {
-                    Debug.Log($"[PipaController] 独立指法 {processedKey} 已被接管，跳过连带单音点亮。");
-                    return;
+
+            // 转发给时间序列亮光控制器（仅用于独立发声/时序类按键）
+            // 甲线：按你的需求，统一由 PipaController 的 FingerGroups/Overrides 控制，避免被 TimedLightController 接管导致位置覆盖不生效。
+            bool shouldDispatchToTimed = !string.IsNullOrEmpty(typeStr) && !typeStr.Contains("甲线");
+            if (shouldDispatchToTimed) {
+                var tlc = GetComponent<TimedLightController>();
+                if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
+                if (tlc != null) {
+                    Debug.Log($"[PipaController] 已找到时序控制器，正在派发: {processedKey}");
+                    bool isHandled = tlc.OnKeyPressed(processedKey);
+                    if (isHandled) {
+                        Debug.Log($"[PipaController] 独立指法 {processedKey} 已被接管，跳过连带单音点亮。");
+                        return;
+                    }
                 }
-            } else {
-                Debug.LogWarning($"[PipaController] 未找到 TimedLightController，无法执行特殊灯光效果。");
+
             }
 
             Debug.Log($"[Highlight] REAL RAW DATA FROM UI: {data} | note={note}, type={typeStr}");
@@ -161,19 +190,74 @@ public class PipaController : MonoBehaviour
         // === 位置查找 ===
         if(!string.IsNullOrEmpty(typeStr) && !isBasicTone) {
             // 特殊指法（甲线十、勾指√、慢撚○、全撚○、落指）等）→ 查 fingerGroupMap
-            if(fingerGroupMap.TryGetValue(typeStr, out var group)) {
-                var overrideNote = group.noteOverrides.FirstOrDefault(n => n.noteName == note);
+            FingerGroup group = null;
+            bool hasGroup = fingerGroupMap.TryGetValue(typeStr, out group);
 
-                if(overrideNote.targetObj != null) {
+            // 兼容：甲线类指法命名在 Inspector/前端之间可能不一致
+            // 常见别名："甲线十" (前端固定) / "甲线" / "甲线+" / "甲线＋"
+            if (!hasGroup && typeStr.Contains("甲线")) {
+                string normalized = typeStr.Replace("＋", "+");
+
+                // 先把 normalized 写回 typeStr（后续 noteOverrides alias 判断也依赖 Contains("甲线")）
+                typeStr = normalized;
+
+                string[] aliases;
+                if (normalized == "甲线十") {
+                    aliases = new string[] { "甲线+", "甲线" };
+                } else if (normalized == "甲线+") {
+                    aliases = new string[] { "甲线十", "甲线" };
+                } else if (normalized == "甲线") {
+                    aliases = new string[] { "甲线十", "甲线+" };
+                } else {
+                    // 其他包含“甲线”的字符串，尝试最常见的三种
+                    aliases = new string[] { "甲线十", "甲线+", "甲线" };
+                }
+
+                foreach (var a in aliases) {
+                    if (fingerGroupMap.TryGetValue(a, out group)) {
+                        hasGroup = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hasGroup && group != null) {
+                bool isJiaXian = typeStr.Contains("甲线");
+
+// 1) 优先匹配 noteOverrides 里的“纯音名”写法：工 / 亻六 / ... (忽略前后空格)
+                var overrideNote = group.noteOverrides.FirstOrDefault(n => n.noteName != null && n.noteName.Trim() == note);
+
+                // 2) 兼容另一种常见写法：甲线（工）/ 甲线（亻六）... 只有当没找到匹配的名字，或者找到了但物体为空时，才尝试另一种名字。
+                if ((string.IsNullOrEmpty(overrideNote.noteName) || overrideNote.targetObj == null) && typeStr.Contains("甲线")) {
+                    string aliasName = $"甲线（{note}）";
+                    var fallbackNote = group.noteOverrides.FirstOrDefault(n => n.noteName != null && n.noteName.Trim() == aliasName);
+                    if (!string.IsNullOrEmpty(fallbackNote.noteName)) {
+                        overrideNote = fallbackNote; // 如果找到了别名并且有值，才覆盖回去
+                    }
+                }
+
+                if (overrideNote.targetObj != null) {
                     target = overrideNote.targetObj;
                 }
                 else if(group.inheritSingleNotes) {
                     singleNoteMap.TryGetValue(note, out target);
                 }
                 // else: inherit=false -> target=null (没配就不亮)
+
+                // 甲线专项调试：打印是否命中覆盖、最终 target
+                if (isJiaXian) {
+                    string overrideName = overrideNote.noteName;
+                    string targetName = target != null ? target.name : "<null>";
+                    Debug.Log($"[PipaController][甲线 Debug] type='{typeStr}', resolvedGroup='{group.fingerName}', note='{note}', matchedOverrideName='{overrideName}', inheritSingleNotes={group.inheritSingleNotes}, target='{targetName}'");
+                }
             } else {
-                // 【新增容错】如果是一个没在 PipaController 中配置过的特殊类型（比如新增的甲线），降级回查单音！
+                // 如果没配置该特殊类型：降级回查单音（保持旧行为，避免完全不亮）
                 singleNoteMap.TryGetValue(note, out target);
+
+                if (typeStr.Contains("甲线")) {
+                    string targetName = target != null ? target.name : "<null>";
+                    Debug.LogWarning($"[PipaController][甲线 Debug] 未找到指法组。type='{typeStr}', note='{note}', fallbackSingleTarget='{targetName}'. 请检查当前乐器集(four/five)的 FingerGroups 是否包含甲线组，或场景里是否有多个 PipaController。");
+                }
             }
         }
         else {
@@ -209,7 +293,11 @@ public class PipaController : MonoBehaviour
             note = data;
         }
 
-        note = note.Replace("𢩩", "扌乂");
+        note = note
+            .Replace("𢩩", "扌乂")
+            .Replace("𫼚", "扌六")
+            .Replace("𫢅", "亻一")
+            .Replace("𠆾", "亻六");
         string processedKey = string.IsNullOrEmpty(typeStr) ? note : $"{note}|{typeStr}";
 
         var tlc = GetComponent<TimedLightController>();
@@ -576,6 +664,7 @@ public class PipaController : MonoBehaviour
     }
 #endif
 }
+
 
 
 

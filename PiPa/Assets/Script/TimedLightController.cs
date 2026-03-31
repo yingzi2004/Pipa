@@ -98,7 +98,17 @@ public class TimedLightController : MonoBehaviour
         if (independentKeys != null) {
             foreach (var config in independentKeys) {
                 if (config != null && !string.IsNullOrEmpty(config.keyName)) {
-                    _keyConfigMap[config.keyName.Replace(" ", "").Trim()] = config;
+                    // 基础清洗：去空格 + trim，并把全角加号统一为半角，避免 Inspector/输入法导致不一致
+                    string cleaned = config.keyName.Replace(" ", "").Trim();
+                    string normalized = cleaned.Replace("＋", "+");
+
+                    _keyConfigMap[cleaned] = config;
+                    _keyConfigMap[normalized] = config;
+
+                    // 同时保留另一种加号形态，进一步容错
+                    if (normalized.Contains("+")) {
+                        _keyConfigMap[normalized.Replace("+", "＋")] = config;
+                    }
                 }
             }
         }
@@ -227,8 +237,10 @@ private void ApplyGlow(GameObject obj, Color colorToApply)
         var renderers = obj.GetComponentsInChildren<Renderer>(true);
         foreach (var r in renderers)
         {
-            r.material.color = colorToApply;
-            r.material.SetColor("_EmissionColor", colorToApply * 1.5f);
+            if (r.material.HasProperty("_Color")) r.material.color = colorToApply;
+            if (r.material.HasProperty("_BaseColor")) r.material.SetColor("_BaseColor", colorToApply);
+            if (r.material.HasProperty("_EmissionColor")) r.material.SetColor("_EmissionColor", colorToApply * 1.5f);
+            r.material.EnableKeyword("_EMISSION");
         }
         var images = obj.GetComponentsInChildren<UnityEngine.UI.Image>(true);
         foreach (var img in images)
@@ -251,16 +263,22 @@ private void ApplyGlow(GameObject obj, Color colorToApply)
 
         Debug.Log($"[TimedLightController] 收到按键指令: '{keyName}'");
 
-        // 去除前端可能带进来的多余空格或不可见字符
-        string cleanKey = keyName.Replace(" ", "").Trim();
+        // 去除前端可能带进来的多余空格或不可见字符，并统一全角加号
+        string cleanKey = keyName.Replace(" ", "").Trim().Replace("＋", "+");
 
         // 提取基础按键（去掉可能携带的 '|点' 等后缀）例如 "摁|点" -> "摁"
+        // 注意：前端对琵琶按键一般是 "音名|类型"，如 "思|甲线十"。
         string baseKey = cleanKey;
+        string notePart = null;
+        string typePart = null;
         if (cleanKey.Contains("|")) {
-            baseKey = cleanKey.Split('|')[0].Trim();
+            var parts = cleanKey.Split('|');
+            notePart = parts.Length > 0 ? parts[0].Trim() : null;
+            typePart = parts.Length > 1 ? parts[1].Trim() : null;
+            baseKey = notePart;
         }
 
-        // 强容错匹配：专门用来对付前端特殊指法字符串可能带来的编码乱码
+        // 强容错匹配：专门用来对付前端特殊指法字符串可能带来的编码差异
         KeyLightConfig config = null;
         if (_keyConfigMap.TryGetValue(cleanKey, out var exactConfig)) {
             config = exactConfig;
@@ -269,6 +287,28 @@ private void ApplyGlow(GameObject obj, Color colorToApply)
         } // 若都没匹配上，再尝试原始名字
         else if (_keyConfigMap.TryGetValue(keyName, out var rawConfig)) {
             config = rawConfig;
+        }
+
+        // 甲线兼容：你的 Inspector 常把键名写成 "思甲线+"，但前端发来的是 "思|甲线十"
+        // 这里把 note|type 自动映射成多种候选键名尝试匹配
+        if (config == null && !string.IsNullOrEmpty(notePart) && !string.IsNullOrEmpty(typePart) && typePart.Contains("甲线")) {
+            string[] candidates = new string[] {
+                $"{notePart}甲线+",
+                $"{notePart}甲线＋",
+                $"{notePart}甲线十",
+                $"{notePart}甲线",
+                // 也尝试 note|type 自身的另一种加号形态
+                cleanKey.Replace("+", "＋"),
+            };
+
+            foreach (var c in candidates) {
+                if (string.IsNullOrEmpty(c)) continue;
+                string cc = c.Replace(" ", "").Trim();
+                if (_keyConfigMap.TryGetValue(cc, out var found)) {
+                    config = found;
+                    break;
+                }
+            }
         }
 
         if (config == null || config.lightSequences.Count == 0 || string.IsNullOrEmpty(config.keyName))

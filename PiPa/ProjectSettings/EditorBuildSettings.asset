@@ -5,7 +5,10 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 1
+  - enabled: 0
     path: Assets/pipa.unity
     guid: 02a126d584c565d419e5a04dc8af104d
+  - enabled: 1
+    path: Assets/pipa2.unity
+    guid: d96b73441ef2bc6439d61eb0df8549b1
   m_configObjects: {}
