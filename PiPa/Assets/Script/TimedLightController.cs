@@ -41,9 +41,17 @@ public class TimedLightController : MonoBehaviour
         public List<LightSequence> lightSequences = new List<LightSequence>();
     }
 
-[Header("独立发声指法配置")]
-    [Tooltip("配置不需要配合单音就直接发声的独立指法序列")]
-    public List<KeyLightConfig> independentKeys = new List<KeyLightConfig>();
+[Header("独立发声指法配置 - 四空管")]
+    [Tooltip("配置四空管不需要配合单音就直接发声的独立指法序列")]
+    [UnityEngine.Serialization.FormerlySerializedAs("independentKeys")]
+    public List<KeyLightConfig> fourAirPipeKeys = new List<KeyLightConfig>();
+
+    [Header("独立发声指法配置 - 五空管")]
+    [Tooltip("配置五空管不需要配合单音就直接发声的独立指法序列")]
+    public List<KeyLightConfig> fiveAirPipeKeys = new List<KeyLightConfig>();
+
+    // 记录当前的指法模式
+    private string _currentMode = "FourAirPipes";
 
     [Header("--- 材质高亮配置 ---")]
     [Tooltip("是否在激活动画时同时赋予材质发光效果（与 PipaController 保持一致）")]
@@ -78,10 +86,26 @@ public class TimedLightController : MonoBehaviour
         TurnOffAllLightsAtStart();
     }
 
+public void SetInstrumentMode(string mode)
+    {
+        _currentMode = mode;
+        RebuildKeyConfigMap();
+        TurnOffAllLightsAtStart();
+    }
+
     void TurnOffAllLightsAtStart()
     {
-        if (independentKeys != null) {
-            foreach (var config in independentKeys) {
+        if (fourAirPipeKeys != null) {
+            foreach (var config in fourAirPipeKeys) {
+                if (config != null && config.lightSequences != null) {
+                    foreach (var seq in config.lightSequences) {
+                        if (seq.lightObject) seq.lightObject.SetActive(false);  
+                    }
+                }
+            }
+        }
+        if (fiveAirPipeKeys != null) {
+            foreach (var config in fiveAirPipeKeys) {
                 if (config != null && config.lightSequences != null) {
                     foreach (var seq in config.lightSequences) {
                         if (seq.lightObject) seq.lightObject.SetActive(false);
@@ -95,8 +119,10 @@ public class TimedLightController : MonoBehaviour
     {
         _keyConfigMap.Clear();
 
-        if (independentKeys != null) {
-            foreach (var config in independentKeys) {
+        List<KeyLightConfig> activeKeys = _currentMode == "FiveAirPipes" ? fiveAirPipeKeys : fourAirPipeKeys;
+
+        if (activeKeys != null) {
+            foreach (var config in activeKeys) {
                 if (config != null && !string.IsNullOrEmpty(config.keyName)) {
                     // 基础清洗：去空格 + trim，并把全角加号统一为半角，避免 Inspector/输入法导致不一致
                     string cleaned = config.keyName.Replace(" ", "").Trim();
@@ -114,7 +140,7 @@ public class TimedLightController : MonoBehaviour
         }
 
         string loadedKeys = string.Join(", ", _keyConfigMap.Keys);
-        Debug.Log($"[TimedLightController] 已加载 {_keyConfigMap.Count} 个独立指法按键配置: [{loadedKeys}]。警告：我正挂载在名为【{gameObject.name}】的物体上！");
+        Debug.Log($"[TimedLightController] [{_currentMode}] 已加载 {_keyConfigMap.Count} 个独立指法按键配置: [{loadedKeys}]。警告：我正挂载在名为【{gameObject.name}】的物体上！");
     }
 
     void Update()

@@ -83,6 +83,13 @@ public class PipaController : MonoBehaviour
             currentSet = fourPipes;
         }
 
+        var tlcs = FindObjectsOfType<TimedLightController>();
+        foreach(var tlc in tlcs) {
+            if (tlc != null) {
+                tlc.SetInstrumentMode(mode);
+            }
+        }
+
         RebuildCache();
     }
 
@@ -105,7 +112,7 @@ public class PipaController : MonoBehaviour
                 fingerGroupMap.Add(g.fingerName, g);
 
             // 再注册标准化/别名 key，避免 Inspector 与前端命名不一致
-            // 例如："甲线＋"(全角) vs "甲线+"(半角) vs "甲线十"(前端固定)
+            // 例如："甲线＋"(全角) vs "甲线+"(半角) vs "甲线十"(前端固定)      
             string normalized = g.fingerName.Replace("＋", "+").Trim();
             if(!fingerGroupMap.ContainsKey(normalized))
                 fingerGroupMap.Add(normalized, g);
@@ -161,17 +168,21 @@ public class PipaController : MonoBehaviour
             // 甲线：按你的需求，统一由 PipaController 的 FingerGroups/Overrides 控制，避免被 TimedLightController 接管导致位置覆盖不生效。
             bool shouldDispatchToTimed = !string.IsNullOrEmpty(typeStr) && !typeStr.Contains("甲线");
             if (shouldDispatchToTimed) {
-                var tlc = GetComponent<TimedLightController>();
-                if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
-                if (tlc != null) {
-                    Debug.Log($"[PipaController] 已找到时序控制器，正在派发: {processedKey}");
-                    bool isHandled = tlc.OnKeyPressed(processedKey);
-                    if (isHandled) {
-                        Debug.Log($"[PipaController] 独立指法 {processedKey} 已被接管，跳过连带单音点亮。");
-                        return;
+                bool isHandled = false;
+                var tlcs = FindObjectsOfType<TimedLightController>();
+                foreach(var tlc in tlcs) {
+                    if (tlc != null) {
+                        Debug.Log($"[PipaController] 已找到时序控制器，正在派发: {processedKey}");
+                        if (tlc.OnKeyPressed(processedKey)) {
+                            isHandled = true;
+                        }
                     }
                 }
-
+                
+                if (isHandled) {
+                    Debug.Log($"[PipaController] 独立指法 {processedKey} 已被接管，跳过连带单音点亮。");
+                    return;
+                }
             }
 
             Debug.Log($"[Highlight] REAL RAW DATA FROM UI: {data} | note={note}, type={typeStr}");
@@ -300,10 +311,11 @@ public class PipaController : MonoBehaviour
             .Replace("𠆾", "亻六");
         string processedKey = string.IsNullOrEmpty(typeStr) ? note : $"{note}|{typeStr}";
 
-        var tlc = GetComponent<TimedLightController>();
-        if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
-        if (tlc != null) {
-            tlc.OnKeyReleased(processedKey);
+        var tlcs = FindObjectsOfType<TimedLightController>();
+        foreach(var tlc in tlcs) {
+            if (tlc != null) {
+                tlc.OnKeyReleased(processedKey);
+            }
         }
 
         if(lastActiveObj != null) {
@@ -382,8 +394,7 @@ public class PipaController : MonoBehaviour
         if (pulse == null) pulse = obj.AddComponent<GlowPulseEffect>();
 
         // WebGL 修复: 确保资源注入
-        var tlc = GetComponent<TimedLightController>();
-        if (tlc == null) tlc = FindObjectOfType<TimedLightController>();
+        var tlc = FindObjectOfType<TimedLightController>();
         if (tlc != null) {
             pulse.SetResources(tlc.rippleShader, tlc.rippleTexture);
         }
