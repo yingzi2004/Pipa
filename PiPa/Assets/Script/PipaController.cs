@@ -185,6 +185,12 @@ public class PipaController : MonoBehaviour
                 }
             }
 
+            // 新增：如果本次输入是单音引发，应当强制打断可能正在播放独立特效的 TimedLightController
+            var _tlcs = FindObjectsOfType<TimedLightController>();
+            foreach(var tlc in _tlcs) {
+                if (tlc != null) tlc.ManualStop();
+            }
+
             Debug.Log($"[Highlight] REAL RAW DATA FROM UI: {data} | note={note}, type={typeStr}");
             UpdateDisplay(note, typeStr);
         } finally {
@@ -320,12 +326,7 @@ public class PipaController : MonoBehaviour
 
         if(lastActiveObj != null) {
             // [修改] 实现优雅退出：如果是点击（按住时间短），让它播完一次动画再隐藏；否则在当前循环结束后隐藏
-            var pulse = lastActiveObj.GetComponent<GlowPulseEffect>();
-            if (pulse != null) {
-                pulse.RequestGracefulStop();
-            } else {
-                lastActiveObj.SetActive(false);
-            }
+            lastActiveObj.SetActive(false);
             lastActiveObj = null;
         }
     }

@@ -279,7 +279,7 @@ public class GlowPulseEffect : MonoBehaviour
 
         // 重新获取材质和颜色，因为 PipaController 可能会在 Activate 时修改材质颜色
         renderers = GetComponentsInChildren<Renderer>();
-        if (renderers.Length > 0)
+        if (renderers.Length > 0 && renderers[0] != null && renderers[0].material != null)
         {
             if (renderers[0].material.HasProperty("_Color")) {
                 baseColor = renderers[0].material.color;
@@ -303,6 +303,7 @@ public class GlowPulseEffect : MonoBehaviour
     public void RequestGracefulStop()
     {
         isStopping = true;
+        gameObject.SetActive(false);
     }
 
     IEnumerator PulseRoutine()
